@@ -1,0 +1,94 @@
+-- Server: ServerScriptService/SpawnBrainrotServer.lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local Remote = ReplicatedStorage:WaitForChild("RequestSpawnBrainrot")
+
+-- Lista de admins (pon aquí tus UserIds si quieres probar)
+local admins = {
+    [12345678] = true, -- reemplaza con tu UserId para pruebas
+    -- [98765432] = true,
+}
+
+-- Función para elegir un spawn point (usa el primer "SpawnPoint" que encuentre)
+local function getSpawnCFrame()
+    local spawnFolder = Workspace:FindFirstChild("SpawnPoints")
+    if spawnFolder then
+        for _,v in ipairs(spawnFolder:GetChildren()) do
+            if v:IsA("BasePart") then
+                return v.CFrame
+            end
+        end
+    end
+    -- fallback: frente al primer jugador
+    local anyPlayer = Players:GetPlayers()[1]
+    if anyPlayer and anyPlayer.Character and anyPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        return anyPlayer.Character.HumanoidRootPart.CFrame * CFrame.new(5,0,0)
+    end
+    return CFrame.new(0,5,0)
+end
+
+-- Handler del RemoteEvent
+Remote.OnServerEvent:Connect(function(player, requestedType)
+    -- Validación básica: sólo admins pueden spawnear (modifica para tu lógica)
+    if not admins[player.UserId] then
+        -- Envía retroalimentación al cliente
+        Remote:FireClient(player, false, "No tienes permisos para spawnear.")
+        return
+    end
+
+    -- Sólo permitimos tipos conocidos (seguro para pruebas)
+    local allowedTypes = {
+        Delta = true,
+        Strawberry = true,
+        -- agrega otros si deseas
+    }
+
+    if type(requestedType) ~= "string" or not allowedTypes[requestedType] then
+        Remote:FireClient(player, false, "Tipo inválido: " .. tostring(requestedType))
+        return
+    end
+
+    -- Busca el modelo en ServerStorage
+    local modelName = "Brainrot" .. requestedType -- por ejemplo "BrainrotDelta"
+    local modelTemplate = ServerStorage:FindFirstChild(modelName)
+    if not modelTemplate or not modelTemplate:IsA("Model") then
+        Remote:FireClient(player, false, "Modelo '".. modelName .."' no encontrado en ServerStorage.")
+        return
+    end
+
+    -- Clona y posiciona
+    local clone = modelTemplate:Clone()
+    local ok, spawnCFrame = pcall(getSpawnCFrame)
+    if not ok then spawnCFrame = CFrame.new(0,5,0) end
+
+    -- Asegúrate de que el modelo tenga PrimaryPart
+    if not clone.PrimaryPart then
+        -- intenta asignar la primera BasePart que encuentre
+        for _,part in ipairs(clone:GetDescendants()) do
+            if part:IsA("BasePart") then
+                clone.PrimaryPart = part
+                break
+            end
+        end
+    end
+
+    if clone.PrimaryPart then
+        clone:SetPrimaryPartCFrame(spawnCFrame + Vector3.new(0, 1, 0))
+    else
+        -- si no tiene PrimaryPart, posición de forma más tosca
+        clone.Parent = Workspace
+        for _,part in ipairs(clone:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CFrame = spawnCFrame + Vector3.new(0,1,0)
+            end
+        end
+        Remote:FireClient(player, true, "Spawn realizado (modelo sin PrimaryPart).")
+        return
+    end
+
+    clone.Parent = Workspace
+    Remote:FireClient(player, true, "Spawn realizado: ".. modelName)
+end)
